@@ -4,7 +4,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setuptools.setup(
-    name="hhrnet_uyoung",
+    name="hhrnet",
     version="0.1",
     author="Uyoung Jeong",
     author_email="jeong.uyoung@unist.ac.kr",
