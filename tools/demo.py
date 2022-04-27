@@ -144,10 +144,11 @@ def evaluate(self, cfg, preds, scores, output_dir, file_names,
         oks_nmsed_kpts, res_file
     )
 
-    return {'Null': 0}, 0
+    return oks_nmsed_kpts
 
-def main():
-    args = parse_args()
+def main(args=None):
+    if args is None:
+        args = parse_args()
     update_config(cfg, args)
     check_config(cfg)
 
@@ -285,9 +286,11 @@ def main():
         all_preds.append(final_results) # n_result x 17 x 5
         all_scores.append(scores)
 
-    name_values, _ = evaluate(
+    oks_nmsed_kpts = evaluate(
         dummy_dataset, cfg, all_preds, all_scores, final_output_dir, files
     )
+
+    return oks_nmsed_kpts
 
 
 if __name__ == '__main__':
