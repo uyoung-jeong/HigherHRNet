@@ -15,7 +15,7 @@ import cv2
 import numpy as np
 import torchvision
 
-from dataset import VIS_CONFIG
+from hhrnet.lib.dataset import VIS_CONFIG
 
 
 def add_joints(image, joints, color, dataset='COCO'):

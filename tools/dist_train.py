@@ -26,20 +26,20 @@ import torch.utils.data
 import torch.utils.data.distributed
 from tensorboardX import SummaryWriter
 
-import _init_paths
-import models
+import hhrnet.tools._init_paths as _init_paths
+import hhrnet.lib.models as models
 
-from config import cfg
-from config import update_config
-from core.loss import MultiLossFactory
-from core.trainer import do_train
-from dataset import make_dataloader
-from fp16_utils.fp16util import network_to_half
-from fp16_utils.fp16_optimizer import FP16_Optimizer
-from utils.utils import create_logger
-from utils.utils import get_optimizer
-from utils.utils import save_checkpoint
-from utils.utils import setup_logger
+from hhrnet.lib.config import cfg
+from hhrnet.lib.config import update_config
+from hhrnet.lib.core.loss import MultiLossFactory
+from hhrnet.lib.core.trainer import do_train
+from hhrnet.lib.dataset import make_dataloader
+from hhrnet.lib.fp16_utils.fp16util import network_to_half
+from hhrnet.lib.fp16_utils.fp16_optimizer import FP16_Optimizer
+from hhrnet.lib.utils.utils import create_logger
+from hhrnet.lib.utils.utils import get_optimizer
+from hhrnet.lib.utils.utils import save_checkpoint
+from hhrnet.lib.utils.utils import setup_logger
 
 
 def parse_args():

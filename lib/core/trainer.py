@@ -13,8 +13,8 @@ import logging
 import os
 import time
 
-from utils.utils import AverageMeter
-from utils.vis import save_debug_images
+from hhrnet.lib.utils.utils import AverageMeter
+from hhrnet.lib.utils.vis import save_debug_images
 
 
 def do_train(cfg, model, data_loader, loss_factory, optimizer, epoch,

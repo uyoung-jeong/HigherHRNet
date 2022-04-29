@@ -21,7 +21,7 @@ import numpy as np
 from torch.utils.data import Dataset
 
 from pycocotools.cocoeval import COCOeval
-from utils import zipreader
+from hhrnet.lib.utils import zipreader
 
 logger = logging.getLogger(__name__)
 
@@ -163,9 +163,9 @@ class CocoDataset(Dataset):
         :param cfg: cfg dictionary
         :param preds: prediction
         :param output_dir: output directory
-        :param args: 
-        :param kwargs: 
-        :return: 
+        :param args:
+        :param kwargs:
+        :return:
         '''
         res_folder = os.path.join(output_dir, 'results')
         if not os.path.exists(res_folder):

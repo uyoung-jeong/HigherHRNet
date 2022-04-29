@@ -12,7 +12,7 @@ from __future__ import print_function
 
 import torch
 
-from dataset.transforms import FLIP_CONFIG
+from hhrnet.lib.dataset.transforms import FLIP_CONFIG
 
 
 def get_outputs(

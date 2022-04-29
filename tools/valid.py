@@ -23,24 +23,24 @@ import torchvision.transforms
 import torch.multiprocessing
 from tqdm import tqdm
 
-import _init_paths
-import models
+import hhrnet.tools._init_paths as _init_paths
+import hhrnet.lib.models as models
 
-from config import cfg
-from config import check_config
-from config import update_config
-from core.inference import get_multi_stage_outputs
-from core.inference import aggregate_results
-from core.group import HeatmapParser
-from dataset import make_test_dataloader
-from fp16_utils.fp16util import network_to_half
-from utils.utils import create_logger
-from utils.utils import get_model_summary
-from utils.vis import save_debug_images
-from utils.vis import save_valid_image
-from utils.transforms import resize_align_multi_scale
-from utils.transforms import get_final_preds
-from utils.transforms import get_multi_scale_size
+from hhrnet.lib.config import cfg
+from hhrnet.lib.config import check_config
+from hhrnet.lib.config import update_config
+from hhrnet.lib.core.inference import get_multi_stage_outputs
+from hhrnet.lib.core.inference import aggregate_results
+from hhrnet.lib.core.group import HeatmapParser
+from hhrnet.lib.dataset import make_test_dataloader
+from hhrnet.lib.fp16_utils.fp16util import network_to_half
+from hhrnet.lib.utils.utils import create_logger
+from hhrnet.lib.utils.utils import get_model_summary
+from hhrnet.lib.utils.vis import save_debug_images
+from hhrnet.lib.utils.vis import save_valid_image
+from hhrnet.lib.utils.transforms import resize_align_multi_scale
+from hhrnet.lib.utils.transforms import get_final_preds
+from hhrnet.lib.utils.transforms import get_multi_scale_size
 
 torch.multiprocessing.set_sharing_strategy('file_system')
 
