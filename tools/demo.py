@@ -230,7 +230,7 @@ def main(args=None):
     else:
         print(f'{input_path} seems to be an inappropriate path')
     files.sort()
-    
+
     parser = HeatmapParser(cfg)
     all_preds = []
     all_scores = []
