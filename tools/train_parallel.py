@@ -4,7 +4,7 @@
 # Written by Bin Xiao (leoxiaobin@gmail.com)
 # Modified by Bowen Cheng (bcheng9@illinois.edu)
 # ------------------------------------------------------------------------------
-
+# Train without distributed learning and custom fp16
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -17,14 +17,14 @@ import warnings
 
 import torch
 import torch.backends.cudnn as cudnn
-import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.nn.parallel
 import torch.optim
 import torch.utils.data
-import torch.utils.data.distributed
 from tensorboardX import SummaryWriter
+from torch.nn.parallel.data_parallel import DataParallel
+import torch.cuda.amp as amp
 
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__),'..','..'))
@@ -34,10 +34,8 @@ import hhrnet.lib.models as models
 from hhrnet.lib.config import cfg
 from hhrnet.lib.config import update_config
 from hhrnet.lib.core.loss import MultiLossFactory
-from hhrnet.lib.core.trainer import do_train
+from hhrnet.lib.core.trainer import do_train_amp
 from hhrnet.lib.dataset import make_dataloader
-from hhrnet.lib.fp16_utils.fp16util import network_to_half
-from hhrnet.lib.fp16_utils.fp16_optimizer import FP16_Optimizer
 from hhrnet.lib.utils.utils import create_logger
 from hhrnet.lib.utils.utils import get_optimizer
 from hhrnet.lib.utils.utils import save_checkpoint
@@ -67,22 +65,8 @@ def parse_args():
                         default=None,
                         nargs=argparse.REMAINDER)
 
-    # distributed training
-    parser.add_argument('--gpu',
-                        help='gpu id for multiprocessing training',
-                        type=str)
-    parser.add_argument('--world-size',
-                        default=1,
-                        type=int,
-                        help='number of nodes for distributed training')
-    parser.add_argument('--dist-url',
-                        default='tcp://127.0.0.1:23456',
-                        type=str,
-                        help='url used to set up distributed training')
-    parser.add_argument('--rank',
-                        default=0,
-                        type=int,
-                        help='node rank for distributed training')
+    # amp args
+    parser.add_argument('--amp_scale', type=float, default=1024., help='initial amp loss scale')
 
     args = parser.parse_args()
     return args
@@ -93,7 +77,6 @@ def main():
     update_config(cfg, args)
 
     cfg.defrost()
-    cfg.RANK = args.rank
     cfg.freeze()
 
     logger, final_output_dir, tb_log_dir = create_logger(
@@ -105,36 +88,15 @@ def main():
     logger.info(final_output_dir)
     logger.info(tb_log_dir)
 
-    if args.gpu is not None:
-        warnings.warn('You have chosen a specific GPU. This will completely '
-                      'disable data parallelism.')
-
-    if args.dist_url == "env://" and args.world_size == -1:
-        args.world_size = int(os.environ["WORLD_SIZE"])
-
-    args.distributed = args.world_size > 1 or cfg.MULTIPROCESSING_DISTRIBUTED
-
     ngpus_per_node = torch.cuda.device_count()
-    if cfg.MULTIPROCESSING_DISTRIBUTED:
-        # Since we have ngpus_per_node processes per node, the total world_size
-        # needs to be adjusted accordingly
-        args.world_size = ngpus_per_node * args.world_size
-        # Use torch.multiprocessing.spawn to launch distributed processes: the
-        # main_worker process function
-        mp.spawn(
-            main_worker,
-            nprocs=ngpus_per_node,
-            args=(ngpus_per_node, args, final_output_dir, tb_log_dir)
-        )
-    else:
-        # Simply call main_worker function
-        main_worker(
-            ','.join([str(i) for i in cfg.GPUS]),
-            ngpus_per_node,
-            args,
-            final_output_dir,
-            tb_log_dir
-        )
+    # Simply call main_worker function
+    main_worker(
+        ','.join([str(i) for i in cfg.GPUS]),
+        ngpus_per_node,
+        args,
+        final_output_dir,
+        tb_log_dir
+    )
 
 
 def main_worker(
@@ -152,46 +114,23 @@ def main_worker(
         if not cfg.FP16.ENABLED:
             print("Warning:  if --fp16 is not used, static_loss_scale will be ignored.")
 
-    args.gpu = gpu
-
-    if args.gpu is not None:
-        print("Use GPU: {} for training".format(args.gpu))
-
-    if args.distributed:
-        if args.dist_url == "env://" and args.rank == -1:
-            args.rank = int(os.environ["RANK"])
-        if cfg.MULTIPROCESSING_DISTRIBUTED:
-            # For multiprocessing distributed training, rank needs to be the
-            # global rank among all the processes
-            args.rank = args.rank * ngpus_per_node + gpu
-        print('Init process group: dist_url: {}, world_size: {}, rank: {}'.
-              format(args.dist_url, args.world_size, args.rank))
-        dist.init_process_group(
-            backend=cfg.DIST_BACKEND,
-            init_method=args.dist_url,
-            world_size=args.world_size,
-            rank=args.rank
-        )
+    print("Use GPU: {} for training".format(gpu))
 
     update_config(cfg, args)
 
     # setup logger
-    logger, _ = setup_logger(final_output_dir, args.rank, 'train')
+    logger, _ = setup_logger(final_output_dir, 0, 'train')
 
     model = eval('models.'+cfg.MODEL.NAME+'.get_pose_net')(
         cfg, is_train=True
     )
 
     # copy model file
-    if not cfg.MULTIPROCESSING_DISTRIBUTED or (
-            cfg.MULTIPROCESSING_DISTRIBUTED
-            and args.rank % ngpus_per_node == 0
-    ):
-        this_dir = os.path.dirname(__file__)
-        shutil.copy2(
-            os.path.join(this_dir, '../lib/models', cfg.MODEL.NAME + '.py'),
-            final_output_dir
-        )
+    this_dir = os.path.dirname(__file__)
+    shutil.copy2(
+        os.path.join(this_dir, '../lib/models', cfg.MODEL.NAME + '.py'),
+        final_output_dir
+    )
 
     writer_dict = {
         'writer': SummaryWriter(log_dir=tb_log_dir),
@@ -199,59 +138,22 @@ def main_worker(
         'valid_global_steps': 0,
     }
 
-    if not cfg.MULTIPROCESSING_DISTRIBUTED or (
-            cfg.MULTIPROCESSING_DISTRIBUTED
-            and args.rank % ngpus_per_node == 0
-    ):
-        dump_input = torch.rand(
-            (1, 3, cfg.DATASET.INPUT_SIZE, cfg.DATASET.INPUT_SIZE)
-        )
-        writer_dict['writer'].add_graph(model, (dump_input, ))
-        # logger.info(get_model_summary(model, dump_input, verbose=cfg.VERBOSE))
+    dump_input = torch.rand(
+        (1, 3, cfg.DATASET.INPUT_SIZE, cfg.DATASET.INPUT_SIZE)
+    )
+    writer_dict['writer'].add_graph(model, (dump_input, ))
+    # logger.info(get_model_summary(model, dump_input, verbose=cfg.VERBOSE))
 
-    if cfg.FP16.ENABLED:
-        model = network_to_half(model)
+    scaler = amp.GradScaler(init_scale=args.amp_scale, enabled=cfg.FP16.ENABLED)
 
-    if cfg.MODEL.SYNC_BN and not args.distributed:
-        print('Warning: Sync BatchNorm is only supported in distributed training.')
-
-    if args.distributed:
-        if cfg.MODEL.SYNC_BN:
-            model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        # For multiprocessing distributed, DistributedDataParallel constructor
-        # should always set the single device scope, otherwise,
-        # DistributedDataParallel will use all available devices.
-        if args.gpu is not None:
-            if isinstance(args.gpu, str):
-                args.gpu = int(args.gpu)
-            torch.cuda.set_device(args.gpu)
-            model.cuda(args.gpu)
-            # When using a single GPU per process and per
-            # DistributedDataParallel, we need to divide the batch size
-            # ourselves based on the total number of GPUs we have
-            # args.workers = int(args.workers / ngpus_per_node)
-            model = torch.nn.parallel.DistributedDataParallel(
-                model, device_ids=[args.gpu]
-            )
-        else:
-            model.cuda()
-            # DistributedDataParallel will divide and allocate batch_size to all
-            # available GPUs if device_ids are not set
-            model = torch.nn.parallel.DistributedDataParallel(model)
-    elif args.gpu is not None:
-        if isinstance(args.gpu, str):
-            args.gpu = int(args.gpu)
-        torch.cuda.set_device(args.gpu)
-        model = model.cuda(args.gpu)
-    else:
-        model = torch.nn.DataParallel(model).cuda()
+    model = torch.nn.DataParallel(model).cuda()
 
     # define loss function (criterion) and optimizer
     loss_factory = MultiLossFactory(cfg).cuda()
 
     # Data loading code
     train_loader = make_dataloader(
-        cfg, is_train=True, distributed=args.distributed
+        cfg, is_train=True, distributed=False
     )
     logger.info(train_loader.dataset)
 
@@ -279,13 +181,6 @@ def main_worker(
     last_epoch = -1
     optimizer = get_optimizer(cfg, model)
 
-    if cfg.FP16.ENABLED:
-        optimizer = FP16_Optimizer(
-            optimizer,
-            static_loss_scale=cfg.FP16.STATIC_LOSS_SCALE,
-            dynamic_loss_scale=cfg.FP16.DYNAMIC_LOSS_SCALE
-        )
-
     begin_epoch = cfg.TRAIN.BEGIN_EPOCH
     checkpoint_file = os.path.join(
         final_output_dir, 'checkpoint.pth.tar')
@@ -304,26 +199,20 @@ def main_worker(
         logger.info("=> loaded checkpoint '{}' (epoch {})".format(
             checkpoint_file, checkpoint['epoch']))
 
-    if cfg.FP16.ENABLED:
-        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer.optimizer, cfg.TRAIN.LR_STEP, cfg.TRAIN.LR_FACTOR,
-            last_epoch=last_epoch
-        )
-    else:
-        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer, cfg.TRAIN.LR_STEP, cfg.TRAIN.LR_FACTOR,
-            last_epoch=last_epoch
-        )
+    lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
+        optimizer, cfg.TRAIN.LR_STEP, cfg.TRAIN.LR_FACTOR,
+        last_epoch=last_epoch
+    )
 
     for epoch in range(begin_epoch, cfg.TRAIN.END_EPOCH):
         # train one epoch
-        do_train(cfg, model, train_loader, loss_factory, optimizer, epoch,
-                 final_output_dir, tb_log_dir, writer_dict, fp16=cfg.FP16.ENABLED)
+        do_train_amp(cfg, model, train_loader, loss_factory, optimizer, epoch,
+                 final_output_dir, tb_log_dir, writer_dict, fp16=cfg.FP16.ENABLED, scaler=scaler)
         # In PyTorch 1.1.0 and later, you should call `lr_scheduler.step()` after `optimizer.step()`.
         lr_scheduler.step()
 
         # validation
-        if args.rank == 0 and epoch % 2 == 0:
+        if epoch % 2 == 0:
             all_preds = []
             all_scores = []
 
@@ -413,32 +302,27 @@ def main_worker(
                 best_model = False
 
             # save checkpoint
-            if not cfg.MULTIPROCESSING_DISTRIBUTED or (
-                    cfg.MULTIPROCESSING_DISTRIBUTED
-                    and args.rank == 0
-            ):
-                logger.info('=> saving checkpoint to {}'.format(final_output_dir))
-                best_state_dict = model.module.state_dict() if cfg.MULTIPROCESSING_DISTRIBUTED else model.state_dict()
-                save_checkpoint({
-                    'epoch': epoch + 1,
-                    'model': cfg.MODEL.NAME,
-                    'state_dict': model.state_dict(),
-                    'best_state_dict': best_state_dict,
-                    'perf': perf_indicator,
-                    'optimizer': optimizer.state_dict(),
-                }, best_model, final_output_dir)
+            logger.info('=> saving checkpoint to {}'.format(final_output_dir))
+            best_state_dict = model.state_dict()
+            save_checkpoint({
+                'epoch': epoch + 1,
+                'model': cfg.MODEL.NAME,
+                'state_dict': model.state_dict(),
+                'best_state_dict': best_state_dict,
+                'perf': perf_indicator,
+                'optimizer': optimizer.state_dict(),
+            }, best_model, final_output_dir)
 
-    if args.rank == 0:
-        final_model_state_file = os.path.join(
-            final_output_dir, 'final_state{}.pth.tar'.format(gpu)
-        )
+    final_model_state_file = os.path.join(
+        final_output_dir, 'final_state{}.pth.tar'.format(gpu)
+    )
 
-        logger.info('saving final model state to {}'.format(
-            final_model_state_file))
-        torch.save(model.module.state_dict(), final_model_state_file)
-        writer_dict['writer'].close()
+    logger.info('saving final model state to {}'.format(
+        final_model_state_file))
+    torch.save(model.module.state_dict(), final_model_state_file)
+    writer_dict['writer'].close()
 
-        print(f'best AP: {best_perf}, best epoch: {best_epoch}')
+    print(f'best AP: {best_perf}, best epoch: {best_epoch}')
 
 if __name__ == '__main__':
     main()

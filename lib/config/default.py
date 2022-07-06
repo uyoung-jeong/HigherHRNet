@@ -62,6 +62,14 @@ _C.LOSS.WITH_AE_LOSS = (True,)
 _C.LOSS.AE_LOSS_TYPE = 'max'
 _C.LOSS.PUSH_LOSS_FACTOR = (0.001,)
 _C.LOSS.PULL_LOSS_FACTOR = (0.001,)
+_C.LOSS.PRIOR_LOSS_FACTOR = (0.001,)
+
+# associative embedding modifications
+_C.LOSS.HIGH_DIM_AE = False
+_C.LOSS.JOINT_DISTANCE_AE = False
+_C.LOSS.AE_MASK = False # gaussian mask
+_C.LOSS.AE_PRIOR = '' # 'truncated_gaussian' for truncated gaussian prior
+_C.LOSS.AE_PRIOR_SIGMA = 0.1
 
 # DATASET related params
 _C.DATASET = CN()
@@ -127,6 +135,7 @@ _C.TEST.FLIP_TEST = False
 _C.TEST.ADJUST = True
 _C.TEST.REFINE = True
 _C.TEST.SCALE_FACTOR = [1]
+_C.TEST.NORMALIZE = ''
 # group
 _C.TEST.DETECTION_THRESHOLD = 0.2
 _C.TEST.TAG_THRESHOLD = 1.

@@ -12,6 +12,7 @@ from __future__ import print_function
 import argparse
 import os
 import pprint
+import numpy as np
 
 import torch
 import torch.backends.cudnn as cudnn
@@ -23,6 +24,8 @@ import torchvision.transforms
 import torch.multiprocessing
 from tqdm import tqdm
 
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__),'..','..'))
 import hhrnet.tools._init_paths as _init_paths
 import hhrnet.lib.models as models
 
@@ -108,14 +111,23 @@ def main():
     dump_input = torch.rand(
         (1, 3, cfg.DATASET.INPUT_SIZE, cfg.DATASET.INPUT_SIZE)
     )
-    logger.info(get_model_summary(model, dump_input, verbose=cfg.VERBOSE))
+    #logger.info(get_model_summary(model, dump_input, verbose=cfg.VERBOSE))
 
     if cfg.FP16.ENABLED:
         model = network_to_half(model)
 
     if cfg.TEST.MODEL_FILE:
         logger.info('=> loading model from {}'.format(cfg.TEST.MODEL_FILE))
-        model.load_state_dict(torch.load(cfg.TEST.MODEL_FILE), strict=True)
+
+        # try to resolve incompatible key naming
+        raw_pretrained_dict = torch.load(cfg.TEST.MODEL_FILE)
+        pretrained_dict = dict()
+        for k,v in raw_pretrained_dict.items():
+            if k[:2]=='1.':
+                k = k[2:]
+            pretrained_dict[k] = v
+
+        model.load_state_dict(pretrained_dict, strict=True)
     else:
         model_state_file = os.path.join(
             final_output_dir, 'model_best.pth.tar'
@@ -181,8 +193,13 @@ def main():
 
             final_heatmaps = final_heatmaps / float(len(cfg.TEST.SCALE_FACTOR))
             tags = torch.cat(tags_list, dim=4)
+            
+            if torch.sum(torch.isnan(tags))>0:
+                print('nan value in tags')
+                import ipdb; ipdb.set_trace()
+
             grouped, scores = parser.parse(
-                final_heatmaps, tags, cfg.TEST.ADJUST, cfg.TEST.REFINE
+                final_heatmaps, tags, cfg.TEST.ADJUST, cfg.TEST.REFINE, anns=annos
             )
 
             final_results = get_final_preds(

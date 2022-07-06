@@ -101,6 +101,7 @@ def get_multi_stage_outputs(
 
         if cfg.LOSS.WITH_AE_LOSS[i] and cfg.TEST.WITH_AE[i]:
             tags.append(output[:, offset_feat:])
+            #tags.append(torch.softmax(output[:, offset_feat:],dim=-1)) # softmax over ae_dim
 
     if num_heatmaps > 0:
         heatmaps.append(heatmaps_avg/num_heatmaps)

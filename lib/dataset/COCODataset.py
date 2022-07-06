@@ -87,6 +87,8 @@ class CocoDataset(Dataset):
 
     def _get_image_path(self, file_name):
         images_dir = os.path.join(self.root, 'images')
+        if not os.path.exists(images_dir):
+            images_dir = self.root
         dataset = 'test2017' if 'test' in self.dataset else self.dataset
         if self.data_format == 'zip':
             return os.path.join(images_dir, dataset) + '.zip@' + file_name
@@ -156,7 +158,7 @@ class CocoDataset(Dataset):
 
         return tmp
 
-    def evaluate(self, cfg, preds, scores, output_dir,
+    def evaluate(self, cfg, preds, scores, output_dir,img_wise_eval=False,
                  *args, **kwargs):
         '''
         Perform evaluation on COCO keypoint task
@@ -180,8 +182,8 @@ class CocoDataset(Dataset):
             img_id = self.ids[idx]
             file_name = self.coco.loadImgs(img_id)[0]['file_name']
             for idx_kpt, kpt in enumerate(_kpts):
-                area = (np.max(kpt[:, 0]) - np.min(kpt[:, 0])) * (np.max(kpt[:, 1]) - np.min(kpt[:, 1]))
-                kpt = self.processKeypoints(kpt)
+                area = (np.max(kpt[:, 0]) - np.min(kpt[:, 0])) * (np.max(kpt[:, 1]) - np.min(kpt[:, 1])) # scalar
+                kpt = self.processKeypoints(kpt) # [17, 4]
                 # if self.with_center:
                 if cfg.DATASET.WITH_CENTER and not cfg.TEST.IGNORE_CENTER:
                     kpt = kpt[:-1]
@@ -215,10 +217,12 @@ class CocoDataset(Dataset):
         )
 
         if 'test' not in self.dataset:
-            info_str = self._do_python_keypoint_eval(
-                res_file, res_folder
+            info_str, coco_eval = self._do_python_keypoint_eval(
+                res_file, res_folder, img_wise_eval=img_wise_eval
             )
             name_value = OrderedDict(info_str)
+            if img_wise_eval:
+                return name_value, name_value['AP'], coco_eval
             return name_value, name_value['AP']
         else:
             return {'Null': 0}, 0
@@ -292,7 +296,7 @@ class CocoDataset(Dataset):
 
         return cat_results
 
-    def _do_python_keypoint_eval(self, res_file, res_folder):
+    def _do_python_keypoint_eval(self, res_file, res_folder, img_wise_eval=False):
         coco_dt = self.coco.loadRes(res_file)
         coco_eval = COCOeval(self.coco, coco_dt, 'keypoints')
         coco_eval.params.useSegm = None
@@ -306,4 +310,6 @@ class CocoDataset(Dataset):
             info_str.append((name, coco_eval.stats[ind]))
             # info_str.append(coco_eval.stats[ind])
 
-        return info_str
+        if img_wise_eval:
+            return info_str, coco_eval
+        return info_str, None

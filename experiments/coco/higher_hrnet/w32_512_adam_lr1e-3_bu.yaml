@@ -22,7 +22,7 @@ DATASET:
   SCALE_TYPE: 'short'
   MAX_TRANSLATE: 40
   MIN_SCALE: 0.75
-  NUM_JOINTS: 17
+  NUM_JOINTS: 30
   ROOT: 'data/coco'
   TEST: val2017
   TRAIN: train2017
@@ -36,7 +36,7 @@ DEBUG:
 LOSS:
   NUM_STAGES: 2
   AE_LOSS_TYPE: exp
-  WITH_AE_LOSS: [True, False]
+  WITH_AE_LOSS: [True, True]
   PUSH_LOSS_FACTOR: [0.001, 0.001]
   PULL_LOSS_FACTOR: [0.001, 0.001]
   WITH_HEATMAPS_LOSS: [True, True]
@@ -106,7 +106,7 @@ TEST:
   SCALE_FACTOR: [1]
   DETECTION_THRESHOLD: 0.1
   WITH_HEATMAPS: (True, True)
-  WITH_AE: (True, False)
+  WITH_AE: (True, True)
   PROJECT2IMAGE: True
   NMS_KERNEL: 5
   NMS_PADDING: 2
@@ -125,5 +125,5 @@ TRAIN:
   OPTIMIZER: adam
   RESUME: False
   SHUFFLE: True
-  WD: 0.0
+  WD: 0.0001
 WORKERS: 4

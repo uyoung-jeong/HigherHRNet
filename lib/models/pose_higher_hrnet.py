@@ -471,7 +471,7 @@ class PoseHigherResolutionNet(nn.Module):
 
         return nn.Sequential(*modules), num_inchannels
 
-    def forward(self, x):
+    def forward(self, x, return_feat=False):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -517,6 +517,8 @@ class PoseHigherResolutionNet(nn.Module):
             y = self.final_layers[i+1](x)
             final_outputs.append(y)
 
+        if return_feat:
+            return final_outputs, y_list
         return final_outputs
 
     def init_weights(self, pretrained='', verbose=True):
@@ -553,11 +555,10 @@ class PoseHigherResolutionNet(nn.Module):
                 if name.split('.')[0] in self.pretrained_layers \
                    or self.pretrained_layers[0] is '*':
                     if name in parameters_names or name in buffers_names:
-                        if verbose:
-                            logger.info(
-                                '=> init {} from {}'.format(name, pretrained)
-                            )
+                        #if verbose:
+                            #logger.info('=> init {} from {}'.format(name, pretrained))
                         need_init_state_dict[name] = m
+            logger.info(f'{len(need_init_state_dict)}/{len(pretrained_state_dict)} pretrained parameters are used for initialization')
             self.load_state_dict(need_init_state_dict, strict=False)
 
 

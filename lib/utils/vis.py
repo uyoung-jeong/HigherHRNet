@@ -236,3 +236,43 @@ def save_debug_images(
         save_batch_maps(
             batch_images, batch_pred_tagmaps, batch_masks, file_name, 'tagmap'
         )
+
+def visualize_img_joint_train(cfg, images, joints):
+    import torch
+    import numpy as np
+    import cv2
+    import os
+    output_res = cfg.DATASET.OUTPUT_SIZE[-1]
+    images_np = torch.permute(images, (0,2,3,1)).detach().numpy()
+    for b_i in range(len(images_np)):
+        img = images_np[b_i]
+        # denorm
+        img[:,:,0] *= 0.229
+        img[:,:,1] *= 0.224
+        img[:,:,2] *= 0.225
+        img[:,:,0] += 0.485
+        img[:,:,1] += 0.456
+        img[:,:,2] += 0.406
+        img = img-np.min(img)
+        img = img/np.max(img)
+        img *= 255
+        img = img.astype(np.uint8).copy() # copy() to prevent type error in cv2
+
+        joint = joints[-1][b_i]
+        for joint_per_person in joint:
+            valid_joint_per_person = joint_per_person[joint_per_person[:,1]>0]
+            if len(valid_joint_per_person)==0:
+                continue
+            valid_joint_offset = valid_joint_per_person[:,0] % (output_res ** 2)
+            valid_joints_2d = np.stack((valid_joint_offset%output_res, valid_joint_offset//output_res),axis=1) * (img.shape[1]/output_res)
+            valid_joints_2d = valid_joints_2d.astype(np.int32)
+            valid_joints_2d = np.clip(valid_joints_2d, 0, img.shape[1]-1)
+
+            for pt in valid_joints_2d:
+                img = cv2.circle(img, [pt[0], pt[1]], radius=3, color=(255,0,0), thickness=3, lineType=cv2.LINE_AA)
+        # save image
+        vis_dir = os.path.join(output_dir, 'train_joint_vis')
+        if not os.path.exists(vis_dir):
+            os.makedirs(vis_dir, exist_ok=True)
+            print(vis_dir)
+        cv2.imwrite(os.path.join(vis_dir, f'{i}_{b_i}.jpg'), img)

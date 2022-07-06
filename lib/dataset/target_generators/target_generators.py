@@ -51,7 +51,7 @@ class HeatmapGenerator():
 
 
 class ScaleAwareHeatmapGenerator():
-    def __init__(self, output_res, num_joints):
+    def __init__(self, output_res, num_joints, sigma=None):
         self.output_res = output_res
         self.num_joints = num_joints
 

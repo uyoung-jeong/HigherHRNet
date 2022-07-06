@@ -57,8 +57,8 @@ class CocoKeypoints(CocoDataset):
             ]
 
         self.transforms = transforms
-        self.heatmap_generator = heatmap_generator
-        self.joints_generator = joints_generator
+        self.heatmap_generator = heatmap_generator # [2x HeatmapGenerator]
+        self.joints_generator = joints_generator # [2x JointsGenerator]
 
     def __getitem__(self, idx):
         img, anno = super().__getitem__(idx)
@@ -71,7 +71,7 @@ class CocoKeypoints(CocoDataset):
         ]
 
         # TODO(bowen): to generate scale-aware sigma, modify `get_joints` to associate a sigma to each joint
-        joints = self.get_joints(anno)
+        joints = self.get_joints(anno) # [n,17,3]
 
         mask_list = [mask.copy() for _ in range(self.num_scales)]
         joints_list = [joints.copy() for _ in range(self.num_scales)]
@@ -90,6 +90,9 @@ class CocoKeypoints(CocoDataset):
             mask_list[scale_id] = mask_list[scale_id].astype(np.float32)
             joints_list[scale_id] = joints_t.astype(np.int32)
 
+        # target_list: [17, 128, 128], [17, 256, 256] (input:512x512)
+        # mask_lsit:  [128,128], [256, 256]
+        # joints_list: [30, 17, 2], [30, 17, 2]
         return img, target_list, mask_list, joints_list
 
     def get_joints(self, anno):

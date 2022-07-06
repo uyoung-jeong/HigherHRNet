@@ -19,8 +19,8 @@ import torch.optim as optim
 import torch.nn as nn
 
 
-def setup_logger(final_output_dir, rank, phase):
-    time_str = time.strftime('%Y-%m-%d-%H-%M')
+def setup_logger(final_output_dir, rank, phase, time_str=''):
+    time_str = time.strftime('%Y-%m-%d-%H-%M') if time_str == '' else time_str
     log_file = '{}_{}_rank{}.log'.format(phase, time_str, rank)
     final_log_file = os.path.join(final_output_dir, log_file)
     head = '%(asctime)-15s %(message)s'
@@ -51,7 +51,10 @@ def create_logger(cfg, cfg_name, phase='train'):
     model = cfg.MODEL.NAME
     cfg_name = os.path.basename(cfg_name).split('.')[0]
 
-    final_output_dir = root_output_dir / dataset / model / cfg_name
+    time_str = time.strftime('%Y-%m-%d-%H-%M')
+
+    #final_output_dir = root_output_dir / dataset / model / cfg_name
+    final_output_dir = root_output_dir / dataset / model / (cfg_name + '_' + time_str)
 
     if cfg.RANK == 0:
         print('=> creating {}'.format(final_output_dir))
@@ -61,7 +64,7 @@ def create_logger(cfg, cfg_name, phase='train'):
             print('=> wait for {} created'.format(final_output_dir))
             time.sleep(5)
 
-    logger, time_str = setup_logger(final_output_dir, cfg.RANK, phase)
+    logger, time_str = setup_logger(final_output_dir, cfg.RANK, phase, time_str)
 
     tensorboard_log_dir = Path(cfg.LOG_DIR) / dataset / model / \
         (cfg_name + '_' + time_str)
@@ -85,7 +88,8 @@ def get_optimizer(cfg, model):
     elif cfg.TRAIN.OPTIMIZER == 'adam':
         optimizer = optim.Adam(
             model.parameters(),
-            lr=cfg.TRAIN.LR
+            lr=cfg.TRAIN.LR,
+            weight_decay=cfg.TRAIN.WD
         )
 
     return optimizer

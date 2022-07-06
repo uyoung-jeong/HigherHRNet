@@ -21,27 +21,85 @@ def py_max_match(scores):
     tmp = np.array(tmp).astype(np.int32)
     return tmp
 
-
-def match_by_tag(inp, params):
+def match_by_high_dim_tag(inp, params, method='base'):
     assert isinstance(params, Params), 'params should be class Params()'
-
+    # tag_k.shpae: [17, 30, 1] wo flip. [17, 30, 2] with flip
+    # tag_k.shape: [17, 30, 17, 2]
+    # loc_k.shape: [17, 30, 2]
+    # val_k.shape: [17, 30]
     tag_k, loc_k, val_k = inp
-    default_ = np.zeros((params.num_joints, 3 + tag_k.shape[2]))
 
-    joint_dict = {}
+    # prepare tag
+    if params.normalize == 'naive': # simplest normalization
+        #tag_k = tag_k - np.max(tag_k) # prevent overflow during softmax. cannot prevent underflow
+        #tag_k = np.exp(tag_k) / np.expand_dims(np.sum(np.exp(tag_k), axis=2),axis=2) # softmax over tag_dim
+        tag_k = tag_k - np.min(tag_k) # prevent negative value
+        tag_k = tag_k / np.expand_dims(np.sum(np.exp(tag_k), axis=2),axis=2) # simple normalization
+
+    if np.isnan(tag_k).any() or np.isinf(tag_k).any():
+        print('nan or inf detected')
+        import ipdb; ipdb.set_trace()
+        print()
+
+    tag_k = tag_k.reshape((*tag_k.shape[:-2],-1)) # [17, 30, 17 x (flip)]
+    #tag_swap = np.swapaxes(tag_k,0,1).reshape((params.max_num_people,params.num_joints)) # [30, 17]
+    #tag_swap = np.swapaxes(tag_k,0,1).reshape((params.max_num_people,-1)) # [30, 17] wo flip. [30, 34] with flip
+
+    default_ = np.zeros((params.num_joints, 3 + tag_k.shape[2])) # [17, 4]
+
+    if method != 'base':
+        tag_swap_repeat = np.stack(tag_swap for _ in range(params.num_joints)) # [17, 30, 17]
+
+        joints = np.concatenate((loc_k, val_k[:, :, None], tag_swap_repeat), 2) # [17,30, 3 + 17]
+        mask = joints[:,:,2] > params.detection_threshold # (17, 30)
+
+        joints = [joint[m] for joint,m in zip(joints, mask)] # 17 x [n_above_thres, 20]
+        tags = [tag[m] for tag,m in zip(tag_swap_repeat, mask)] # 17 x [n_above_thres, 17]
+
+        joint_dict = {} # {tag:joint}
+        tag_dict = {}
+
+        import ipdb; ipdb.set_trace()
+
+        tags_mat = np.stack(tags)
+        diff = tags_mat-tags_mat.T
+        diff_normed = np.linalg.norm(diff, ord=2, axis=2)
+
+        num_added = diff.shape[0]
+        num_grouped = diff.shape[1]
+
+        if num_added > num_grouped:
+            diff_normed = np.concatenate(
+                (
+                    diff_normed,
+                    np.zeros((num_added, num_added-num_grouped))+1e10
+                ),
+                axis=1
+            )
+
+        pairs = py_max_match(diff_normed) # [n_grouped, 2]
+
+        # filtering pairs
+
+        ans = np.array([joint_dict[i] for i in joint_dict]).astype(np.float32) # [n_detect, 17, 4]
+        return ans
+
+    ### original
+    joint_dict = {} # {tag:joint}
     tag_dict = {}
     for i in range(params.num_joints):
         idx = params.joint_order[i]
 
-        tags = tag_k[idx]
-        joints = np.concatenate(
-            (loc_k[idx], val_k[idx, :, None], tags), 1
-        )
-        mask = joints[:, 2] > params.detection_threshold
-        tags = tags[mask]
-        joints = joints[mask]
+        #tags = tag_k[idx]
+        tags = tag_k[idx] # [30, 17(tag_dim) x 2(flip)]
 
-        if joints.shape[0] == 0:
+        joints = np.concatenate((loc_k[idx], val_k[idx, :, None], tags), 1) # [30, 3 + 17]
+        mask = joints[:, 2] > params.detection_threshold # (30, )
+
+        tags = tags[mask] # [n_above_thres,17]
+        joints = joints[mask] # [n_above_thres, 3+17]
+
+        if joints.shape[0] == 0: # no above thres
             continue
 
         if i == 0 or len(joint_dict) == 0:
@@ -57,12 +115,13 @@ def match_by_tag(inp, params):
                and len(grouped_keys) == params.max_num_people:
                 continue
 
-            diff = joints[:, None, 3:] - np.array(grouped_tags)[None, :, :]
-            diff_normed = np.linalg.norm(diff, ord=2, axis=2)
+            diff = joints[:, None, 3:] - np.array(grouped_tags)[None, :, :] #[n_above_thres,n_grouped_tags,17]
+            diff_normed = np.linalg.norm(diff, ord=2, axis=2) #[n_above_thres,n_grouped_tags]
+
             diff_saved = np.copy(diff_normed)
 
-            if params.use_detection_val:
-                diff_normed = np.round(diff_normed) * 100 - joints[:, 2:3]
+            if params.use_detection_val: # True
+                diff_normed = np.round(diff_normed) * 100 - joints[:, 2:3] #
 
             num_added = diff.shape[0]
             num_grouped = diff.shape[1]
@@ -76,7 +135,8 @@ def match_by_tag(inp, params):
                     axis=1
                 )
 
-            pairs = py_max_match(diff_normed)
+            pairs = py_max_match(diff_normed) # [n_grouped, 2]
+
             for row, col in pairs:
                 if (
                     row < num_added
@@ -92,7 +152,84 @@ def match_by_tag(inp, params):
                         joints[row]
                     tag_dict[key] = [tags[row]]
 
-    ans = np.array([joint_dict[i] for i in joint_dict]).astype(np.float32)
+    ans = np.array([joint_dict[i] for i in joint_dict]).astype(np.float32) # [n_detect, 17, 4]
+    return ans
+
+def match_by_tag(inp, params):
+    assert isinstance(params, Params), 'params should be class Params()'
+    # tag_k.shpae: [17, 30, 1] wo flip. [17, 30, 2] with flip
+    # loc_k.shape: [17, 30, 2]
+    # val_k.shape: [17, 30]
+    tag_k, loc_k, val_k = inp
+    default_ = np.zeros((params.num_joints, 3 + tag_k.shape[2])) # [17, 4]
+
+    joint_dict = {} # {tag:joint}
+    tag_dict = {}
+    for i in range(params.num_joints):
+        idx = params.joint_order[i]
+
+        tags = tag_k[idx] # [30,1]
+        joints = np.concatenate(
+            (loc_k[idx], val_k[idx, :, None], tags), 1
+        ) # [30,4]
+        mask = joints[:, 2] > params.detection_threshold # (30, )
+
+        tags = tags[mask] # [n_above_thres,1] wo flip. [n_above_thres, 2] with flip
+        joints = joints[mask] # [n_above_thres, 4]
+
+        if joints.shape[0] == 0:
+            continue
+
+        if i == 0 or len(joint_dict) == 0:
+            for tag, joint in zip(tags, joints):
+                key = tag[0] # unflipped one?
+                joint_dict.setdefault(key, np.copy(default_))[idx] = joint
+                tag_dict[key] = [tag]
+        else:
+            grouped_keys = list(joint_dict.keys())[:params.max_num_people]
+            grouped_tags = [np.mean(tag_dict[i], axis=0) for i in grouped_keys]
+
+            if params.ignore_too_much \
+               and len(grouped_keys) == params.max_num_people:
+                continue
+
+            diff = joints[:, None, 3:] - np.array(grouped_tags)[None, :, :] #[n_above_thres,n_grouped_tags,1]
+            diff_normed = np.linalg.norm(diff, ord=2, axis=2) #[n_above_thres,n_grouped_tags]
+            diff_saved = np.copy(diff_normed)
+
+            if params.use_detection_val: # True
+                diff_normed = np.round(diff_normed) * 100 - joints[:, 2:3] #
+
+            num_added = diff.shape[0]
+            num_grouped = diff.shape[1]
+
+            if num_added > num_grouped:
+                diff_normed = np.concatenate(
+                    (
+                        diff_normed,
+                        np.zeros((num_added, num_added-num_grouped))+1e10
+                    ),
+                    axis=1
+                )
+
+            pairs = py_max_match(diff_normed) # [n_grouped, 2]
+
+            for row, col in pairs:
+                if (
+                    row < num_added
+                    and col < num_grouped
+                    and diff_saved[row][col] < params.tag_threshold
+                ):
+                    key = grouped_keys[col]
+                    joint_dict[key][idx] = joints[row]
+                    tag_dict[key].append(tags[row])
+                else:
+                    key = tags[row][0]
+                    joint_dict.setdefault(key, np.copy(default_))[idx] = \
+                        joints[row]
+                    tag_dict[key] = [tags[row]]
+
+    ans = np.array([joint_dict[i] for i in joint_dict]).astype(np.float32) # [n_detect, 17, 4] wo flip. [n_detect, 17, 5] with flip
     return ans
 
 
@@ -118,6 +255,9 @@ class Params(object):
                 i-1 for i in [1, 2, 3, 4, 5, 6, 7, 12, 13, 8, 9, 10, 11, 14, 15, 16, 17]
             ]
 
+        self.high_dim_ae = cfg.LOSS.HIGH_DIM_AE
+        self.normalize = cfg.TEST.NORMALIZE
+
 
 class HeatmapParser(object):
     def __init__(self, cfg):
@@ -134,7 +274,10 @@ class HeatmapParser(object):
         return det
 
     def match(self, tag_k, loc_k, val_k):
-        match = lambda x: match_by_tag(x, self.params)
+        if self.params.high_dim_ae:
+            match = lambda x: match_by_high_dim_tag(x, self.params)
+        else:
+            match = lambda x: match_by_tag(x, self.params)
         return list(map(match, zip(tag_k, loc_k, val_k)))
 
     def top_k(self, det, tag):
@@ -146,32 +289,45 @@ class HeatmapParser(object):
         num_joints = det.size(1)
         h = det.size(2)
         w = det.size(3)
-        det = det.view(num_images, num_joints, -1)
+        det = det.view(num_images, num_joints, -1) # [1, 17, 393216]
+        # val_k: [1, 17, 30]
+        # ind: [1, 17, 30]
         val_k, ind = det.topk(self.params.max_num_people, dim=2)
 
-        tag = tag.view(tag.size(0), tag.size(1), w*h, -1)
+        tag = tag.view(tag.size(0), tag.size(1), w*h, -1) # [1, 17, 393216, 1]
         if not self.tag_per_joint:
             tag = tag.expand(-1, self.params.num_joints, -1, -1)
 
-        tag_k = torch.stack(
-            [
-                torch.gather(tag[:, :, :, i], 2, ind)
-                for i in range(tag.size(3))
-            ],
-            dim=3
-        )
+        if self.params.high_dim_ae:
+            tag_list = []
+            for b_i in range(tag.size(0)): # batch dimension
+                flip_wise_tag = []
+                for i in range(tag.size(3)): # flip dimension
+                    kpt_wise_tag = []
+                    for k_i in range(ind.shape[1]): # keypoint dimension
+                        kpt_wise_tag.append(tag[b_i,:,ind[b_i,k_i],i]) # [17, 30]
+                    flip_wise_tag.append(torch.stack(kpt_wise_tag,dim=2)) # [17, 30, 17]
+                tag_list.append(torch.stack(flip_wise_tag,dim=3)) # [17, 30, 17, 2]
+            tag_k = torch.stack(tag_list, dim=0) # [1, 17, 30, 17, 2]
+        else:
+            tag_k = torch.stack(
+                [
+                    torch.gather(tag[:, :, :, i], 2, ind) # [1, 17, 30]
+                    for i in range(tag.size(3))
+                ],
+                dim=3
+            )
 
-        x = ind % w
-        y = (ind / w).long()
+        x = ind % w # [1, 17, 30]
+        y = (ind / w).long() # [1, 17, 30]
 
-        ind_k = torch.stack((x, y), dim=3)
+        ind_k = torch.stack((x, y), dim=3) # [1, 17, 30, 2]
 
         ans = {
-            'tag_k': tag_k.cpu().numpy(),
-            'loc_k': ind_k.cpu().numpy(),
-            'val_k': val_k.cpu().numpy()
+            'tag_k': tag_k.cpu().numpy(), # [1, 17, 30, 1]
+            'loc_k': ind_k.cpu().numpy(), # [1, 17, 30, 2]
+            'val_k': val_k.cpu().numpy() # [1, 17, 30]
         }
-
         return ans
 
     def adjust(self, ans, det):
@@ -201,7 +357,7 @@ class HeatmapParser(object):
         :param det: numpy.ndarray of size (17, 128, 128)
         :param tag: numpy.ndarray of size (17, 128, 128) if not flip
         :param keypoints: numpy.ndarray of size (17, 4) if not flip, last dim is (x, y, det score, tag score)
-        :return: 
+        :return:
         """
         if len(tag.shape) == 3:
             # tag shape: (17, 128, 128, 1)
@@ -259,25 +415,41 @@ class HeatmapParser(object):
 
         return keypoints
 
-    def parse(self, det, tag, adjust=True, refine=True):
+    def parse(self, det, tag, adjust=True, refine=True, anns=None):
+        # det.shape: [1, 17, 512, w]
+        # tag.shape: [1, 17, 512, w, 1]
+        # ans: 1 x (2, 17, 4)
+        # self.top_k: {'tag_k':(1, 17, 30, 1), 'loc_k':(1, 17, 30, 2), 'val_k':(1, 17, 30)}
         ans = self.match(**self.top_k(det, tag))
 
-        if adjust:
-            ans = self.adjust(ans, det)
+        if anns is not None and ((len(ans)==0 or (len(ans)==1 and len(ans[0])==0)) and len(anns)>0):
+            pass
+            #print(f'matching failed. gt annot num: {len(anns)}, grouped num: {len(ans)}')
+            #import ipdb; ipdb.set_trace()
 
+        if adjust:
+            ans = self.adjust(ans, det) # 1 x (n_prediction, 17, 4)
+
+        # scores: [2]
         scores = [i[:, 2].mean() for i in ans[0]]
+
+        if anns is not None:
+            if len(scores)==0 and len(anns)>0:
+                pass
+                #print('adjust failed')
+                #import ipdb; ipdb.set_trace()
 
         if refine:
             ans = ans[0]
             # for every detected person
             for i in range(len(ans)):
-                det_numpy = det[0].cpu().numpy()
-                tag_numpy = tag[0].cpu().numpy()
+                det_numpy = det[0].cpu().numpy() # (17, 512, 768)
+                tag_numpy = tag[0].cpu().numpy() # (17, 512, 768, 1)
                 if not self.tag_per_joint:
                     tag_numpy = np.tile(
                         tag_numpy, (self.params.num_joints, 1, 1, 1)
                     )
-                ans[i] = self.refine(det_numpy, tag_numpy, ans[i])
-            ans = [ans]
+                ans[i] = self.refine(det_numpy, tag_numpy, ans[i]) # [17, 4] wo flip. [17,5] with flip
+            ans = [ans] # [n_det, 17, 5]
 
         return ans, scores

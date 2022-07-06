@@ -144,7 +144,7 @@ class CrowdPoseDataset(Dataset):
 
         return tmp
 
-    def evaluate(self, cfg, preds, scores, output_dir,
+    def evaluate(self, cfg, preds, scores, output_dir, img_wise_eval=False,
                  *args, **kwargs):
         '''
         Perform evaluation on COCO keypoint task
@@ -203,10 +203,12 @@ class CrowdPoseDataset(Dataset):
         )
 
         # CrowdPose `test` set has annotation.
-        info_str = self._do_python_keypoint_eval(
-            res_file, res_folder
+        info_str, coco_eval = self._do_python_keypoint_eval(
+            res_file, res_folder, img_wise_eval=img_wise_eval
         )
         name_value = OrderedDict(info_str)
+        if img_wise_eval:
+            return name_value, name_value['AP'], coco_eval
         return name_value, name_value['AP']
 
     def _write_coco_keypoint_results(self, keypoints, res_file):
@@ -278,7 +280,7 @@ class CrowdPoseDataset(Dataset):
 
         return cat_results
 
-    def _do_python_keypoint_eval(self, res_file, res_folder):
+    def _do_python_keypoint_eval(self, res_file, res_folder, img_wise_eval=False):
         coco_dt = self.coco.loadRes(res_file)
         coco_eval = COCOeval(self.coco, coco_dt, 'keypoints')
         coco_eval.params.useSegm = None
@@ -292,5 +294,6 @@ class CrowdPoseDataset(Dataset):
         for ind, name in enumerate(stats_names):
             info_str.append((name, coco_eval.stats[stats_index[ind]]))
             # info_str.append(coco_eval.stats[ind])
-
-        return info_str
+        if img_wise_eval:
+            return info_str, coco_eval
+        return info_str, None

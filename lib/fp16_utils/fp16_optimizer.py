@@ -141,8 +141,7 @@ class FP16_Optimizer(object):
             for i, param in enumerate(param_group['params']):
                 if param.requires_grad:
                     if param.type() == 'torch.cuda.HalfTensor':
-                        self.maybe_print("FP16_Optimizer received torch.cuda.HalfTensor with {}"
-                                         .format(param.size()))
+                        #self.maybe_print("FP16_Optimizer received torch.cuda.HalfTensor with {}".format(param.size()))
                         fp16_params_this_group.append(param)
                         master_param = param.detach().clone().float()
                         master_param.requires_grad = True
@@ -153,8 +152,7 @@ class FP16_Optimizer(object):
                         if param in self.optimizer.state:
                             self.optimizer.state[master_param] = self.optimizer.state.pop(param)
                     elif param.type() == 'torch.cuda.FloatTensor':
-                        self.maybe_print("FP16_Optimizer received torch.cuda.FloatTensor with {}"
-                                         .format(param.size()))
+                        #self.maybe_print("FP16_Optimizer received torch.cuda.FloatTensor with {}".format(param.size()))
                         fp32_params_this_group.append(param)
                         param_group['params'][i] = param
                     else:
